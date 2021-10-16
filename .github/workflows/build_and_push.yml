@@ -1,0 +1,92 @@
+name: Push to GHCR
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  push-ghcr:
+    name: Build and push image
+    runs-on: ubuntu-20.04
+
+    steps:
+      # Checkout push-to-registry action github repository
+      - name: Checkout Push to Registry action
+        uses: actions/checkout@v2
+
+      - name: Set output
+        id: tag
+        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+
+      - name: Set output
+        id: image
+        run: echo ::set-output name=image::${GITHUB_REPOSITORY#*/}
+
+      - name: Install latest podman
+        run: bash .github/install_latest_podman.sh
+
+      # - name: debug != master
+      #   if: steps.tag.outputs.tag != 'master'
+      #   run: echo ${{ steps.tag.outputs.tag }}
+      #
+      # - name: debug == master
+      #   if: steps.tag.outputs.tag == 'master'
+      #   run: echo latest
+      #
+      # - name: debug image name
+      #   run: echo ${{ steps.image.outputs.image }}
+
+
+      # Build image using Buildah action
+      - name: Build Image ${{ steps.image.outputs.image }}:latest
+        if: steps.tag.outputs.tag == 'master'
+        id: build-image-latest
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ steps.image.outputs.image }}
+          tags: latest ${{ github.sha }}
+          dockerfiles: |
+            ./Dockerfile
+
+      - name: Build Image ${{ steps.image.outputs.image }}:<latest,${{ steps.tag.outputs.tag }}>
+        if: steps.tag.outputs.tag != 'master'
+        id: build-image
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ steps.image.outputs.image }}
+          tags: latest ${{ steps.tag.outputs.tag }}
+          dockerfiles: |
+            ./Dockerfile
+
+      # Push the image to Quay.io (Image Registry)
+      - name: Push To ghcr.io ${{ steps.image.outputs.image }}:latest
+        if: steps.tag.outputs.tag == 'master'
+        id: push-to-ghcr-latest
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-image-latest.outputs.image }}
+          tags: ${{ steps.build-image-latest.outputs.tags }}
+          registry:  ghcr.io/${{ github.repository_owner }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push To ghcr.io (${{ steps.image.outputs.image }}:<latest,${{ steps.tag.outputs.tag }}>)
+        if: steps.tag.outputs.tag != 'master'
+        id: push-to-ghcr
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-image.outputs.image }}
+          tags: ${{ steps.build-image.outputs.tags }}
+          registry:  ghcr.io/${{ github.repository_owner }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Echo outputs ${{ steps.image.outputs.image }}:latest
+        if: steps.tag.outputs.tag == 'master'
+        run: |
+          echo "${{ toJSON(steps.push-to-ghcr.outputs) }}"
+
+      - name: Echo outputs (${{ steps.image.outputs.image }}:<latest,${{ steps.tag.outputs.tag }}>)
+        if: steps.tag.outputs.tag != 'master'
+        run: |
+          echo "${{ toJSON(steps.push-to-ghcr.outputs) }}"
